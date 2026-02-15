@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>US Registered Companies & Facilities Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; }
+#map { position:absolute; top:0; left:0; right:0; bottom:0; z-index:1; }
+
+/* Sidebar */
+#sidebar {
+  position:absolute; top:0; left:0; bottom:0; width:360px; z-index:1000;
+  background: rgba(15,23,42,.94); backdrop-filter: blur(14px);
+  color: #e2e8f0; display:flex; flex-direction:column;
+  box-shadow: 4px 0 24px rgba(0,0,0,.5);
+  transition: transform .3s ease;
+  overflow-y: auto;
+}
+#sidebar.collapsed { transform: translateX(-360px); }
+#sidebar-toggle {
+  position:absolute; top:12px; right:-42px; width:36px; height:36px;
+  background: rgba(15,23,42,.94); border:none; border-radius:0 8px 8px 0;
+  color:#e2e8f0; font-size:18px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: 4px 0 12px rgba(0,0,0,.3);
+}
+#sidebar header { padding:20px 20px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
+#sidebar header h1 { font-size:17px; font-weight:700; }
+#sidebar header p { font-size:11px; color:#94a3b8; margin-top:4px; }
+
+.section { padding:14px 20px; border-bottom:1px solid rgba(255,255,255,.08); }
+.section h3 { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:#64748b; margin-bottom:10px; font-weight:700; }
+label.lbl { display:block; font-size:12px; color:#94a3b8; margin-bottom:5px; font-weight:600; }
+select, input[type=text] {
+  width:100%; padding:7px 10px; border-radius:6px;
+  border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06);
+  color:#e2e8f0; font-size:13px; outline:none; margin-bottom:10px;
+}
+select:focus, input:focus { border-color:#3b82f6; }
+
+/* Data source cards */
+.src-card {
+  background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);
+  border-radius:8px; padding:10px 12px; margin-bottom:8px;
+  display:flex; align-items:center; gap:10px;
+}
+.src-card.loaded { border-color: #22c55e44; }
+.src-card .src-info { flex:1; }
+.src-card .src-name { font-size:13px; font-weight:600; }
+.src-card .src-desc { font-size:11px; color:#94a3b8; }
+.src-card .src-count { font-size:11px; color:#60a5fa; font-weight:700; }
+.src-card button {
+  padding:5px 12px; border-radius:5px; border:none;
+  background:#3b82f6; color:#fff; font-size:12px; font-weight:600;
+  cursor:pointer; white-space:nowrap;
+}
+.src-card button:hover { background:#2563eb; }
+.src-card button:disabled { background:#475569; cursor:not-allowed; }
+.src-card button.loading { background:#f59e0b; }
+
+/* EPA state picker */
+#epa-state-row { display:flex; gap:6px; align-items:center; margin-top:6px; }
+#epa-state-row select { margin-bottom:0; flex:1; }
+#epa-state-row button { flex-shrink:0; }
+#epa-loaded-list { font-size:11px; color:#94a3b8; margin-top:6px; word-break:break-all; }
+
+/* View toggle */
+.view-toggle { display:flex; gap:5px; margin-bottom:10px; }
+.view-toggle button {
+  flex:1; padding:7px; border-radius:6px; border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.06); color:#94a3b8;
+  font-size:12px; font-weight:600; cursor:pointer;
+}
+.view-toggle button.active { background:#3b82f6; color:#fff; border-color:#3b82f6; }
+
+/* Source checkboxes */
+.src-checks { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+.src-checks label { font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+.src-checks input[type=checkbox] { accent-color:#3b82f6; }
+
+/* Stats */
+.stat-row { display:flex; justify-content:space-between; padding:3px 0; font-size:12px; }
+.stat-row .label { color:#94a3b8; }
+.stat-row .value { font-weight:700; color:#60a5fa; }
+
+/* Legend */
+.legend-item { display:flex; align-items:center; gap:8px; padding:3px 0; font-size:12px; }
+.legend-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+
+/* Loading overlay */
+#loading-overlay {
+  position:absolute; inset:0; z-index:2000;
+  background:rgba(15,23,42,.95);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  color:#e2e8f0; gap:16px; transition: opacity .3s;
+}
+#loading-overlay.hidden { opacity:0; pointer-events:none; }
+.spinner { width:48px; height:48px; border:4px solid rgba(255,255,255,.1); border-top-color:#3b82f6; border-radius:50%; animation:spin 1s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#loading-text { font-size:14px; color:#94a3b8; text-align:center; max-width:300px; }
+
+/* Toast notifications */
+#toast-container { position:absolute; top:16px; right:16px; z-index:3000; display:flex; flex-direction:column; gap:8px; }
+.toast {
+  background:rgba(15,23,42,.95); border:1px solid rgba(255,255,255,.1);
+  border-radius:8px; padding:10px 16px; color:#e2e8f0; font-size:13px;
+  box-shadow:0 4px 16px rgba(0,0,0,.4); min-width:250px;
+  animation: slideIn .3s ease;
+}
+.toast.success { border-left:3px solid #22c55e; }
+.toast.error { border-left:3px solid #ef4444; }
+.toast.info { border-left:3px solid #3b82f6; }
+@keyframes slideIn { from { transform:translateX(100px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+
+/* Cluster overrides */
+.marker-cluster-small { background-color:rgba(59,130,246,.5); }
+.marker-cluster-small div { background-color:rgba(59,130,246,.8); }
+.marker-cluster-medium { background-color:rgba(245,158,11,.5); }
+.marker-cluster-medium div { background-color:rgba(245,158,11,.8); }
+.marker-cluster-large { background-color:rgba(239,68,68,.5); }
+.marker-cluster-large div { background-color:rgba(239,68,68,.8); }
+.marker-cluster div { width:36px; height:36px; margin:5px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px; color:#fff; }
+
+/* Analysis panel */
+.analysis-btn {
+  width:100%; padding:8px; border-radius:6px; border:none;
+  background: linear-gradient(135deg, #dc2626, #f59e0b);
+  color:#fff; font-size:13px; font-weight:700; cursor:pointer;
+  letter-spacing:.3px;
+}
+.analysis-btn:hover { opacity:.9; }
+.analysis-btn:disabled { opacity:.5; cursor:not-allowed; }
+.analysis-controls { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+.ctrl-row { display:flex; gap:8px; align-items:center; }
+.ctrl-row label { font-size:11px; color:#94a3b8; min-width:70px; flex-shrink:0; }
+.ctrl-row input, .ctrl-row select { flex:1; padding:5px 8px; border-radius:5px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:#e2e8f0; font-size:12px; }
+.ctrl-row input[type=range] { accent-color:#f59e0b; }
+.range-val { font-size:11px; color:#60a5fa; min-width:40px; text-align:right; }
+
+/* Cluster result cards */
+#analysis-results { max-height:400px; overflow-y:auto; margin-top:10px; }
+.cluster-card {
+  background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
+  border-radius:8px; padding:10px 12px; margin-bottom:6px; cursor:pointer;
+  transition: border-color .2s, background .2s;
+}
+.cluster-card:hover { border-color: #f59e0b88; background: rgba(255,255,255,.07); }
+.cluster-card.active { border-color: #f59e0b; background: rgba(245,158,11,.08); }
+.cc-header { display:flex; justify-content:space-between; align-items:center; }
+.cc-rank { font-size:11px; font-weight:800; color:#f59e0b; }
+.cc-industry { font-size:12px; font-weight:600; color:#e2e8f0; flex:1; margin-left:8px; }
+.cc-count { font-size:13px; font-weight:800; color:#ef4444; }
+.cc-meta { font-size:11px; color:#94a3b8; margin-top:4px; }
+.cc-names { font-size:11px; color:#64748b; margin-top:4px; }
+.cc-names span { color:#94a3b8; }
+.cc-density { display:inline-block; padding:2px 6px; border-radius:3px; font-size:10px; font-weight:700; margin-left:6px; }
+.cc-density.high { background:rgba(239,68,68,.2); color:#ef4444; }
+.cc-density.med { background:rgba(245,158,11,.2); color:#f59e0b; }
+.cc-density.low { background:rgba(59,130,246,.2); color:#3b82f6; }
+</style>
+</head>
+<body>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">Initializing... Loading FDIC bank data</div>
+</div>
+
+<div id="toast-container"></div>
+<div id="map"></div>
+
+<div id="sidebar">
+  <button id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
+
+  <header>
+    <h1>US Registered Companies & Facilities</h1>
+    <p>Official government data: FDIC, SEC EDGAR, EPA ECHO</p>
+  </header>
+
+  <!-- Data Sources -->
+  <div class="section">
+    <h3>Data Sources</h3>
+
+    <div class="src-card" id="card-fdic">
+      <div class="src-info">
+        <div class="src-name">FDIC Banks</div>
+        <div class="src-desc">FDIC-insured banks & savings institutions</div>
+        <div class="src-count" id="count-fdic">Not loaded</div>
+      </div>
+      <button id="btn-load-fdic" onclick="loadSource('fdic')">Load</button>
+    </div>
+
+    <div class="src-card" id="card-sec">
+      <div class="src-info">
+        <div class="src-name">SEC Public Companies</div>
+        <div class="src-desc">Publicly-traded companies (SEC EDGAR)</div>
+        <div class="src-count" id="count-sec">Not loaded</div>
+      </div>
+      <button id="btn-load-sec" onclick="loadSource('sec')">Load</button>
+    </div>
+
+    <div class="src-card" id="card-epa">
+      <div class="src-info">
+        <div class="src-name">EPA Regulated Facilities</div>
+        <div class="src-desc">~5.5M facilities (load per state)</div>
+        <div class="src-count" id="count-epa">Not loaded</div>
+        <div id="epa-state-row">
+          <select id="epa-state-select"></select>
+          <button id="btn-load-epa" onclick="loadEpaState()">Load State</button>
+        </div>
+        <div style="margin-top:8px">
+          <button id="btn-load-all-epa" onclick="loadAllEpa()" style="width:100%;padding:7px;border-radius:5px;border:none;background:#7c3aed;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Load All 51 States</button>
+        </div>
+        <div id="epa-progress" style="display:none;margin-top:6px;font-size:11px;color:#94a3b8">
+          <div id="epa-progress-text"></div>
+          <div style="background:rgba(255,255,255,.1);border-radius:3px;height:6px;margin-top:4px;overflow:hidden">
+            <div id="epa-progress-bar" style="background:#7c3aed;height:100%;width:0%;transition:width .3s"></div>
+          </div>
+        </div>
+        <div id="epa-loaded-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="section">
+    <h3>Filters</h3>
+
+    <div class="src-checks">
+      <label><input type="checkbox" id="chk-fdic" checked> FDIC</label>
+      <label><input type="checkbox" id="chk-sec" checked> SEC</label>
+      <label><input type="checkbox" id="chk-epa" checked> EPA</label>
+    </div>
+
+    <label class="lbl">State</label>
+    <select id="filter-state"><option value="">All States</option></select>
+
+    <label class="lbl">Industry / Sector</label>
+    <select id="filter-industry"><option value="">All Industries</option></select>
+
+    <label class="lbl">Search by Name</label>
+    <input type="text" id="filter-search" placeholder="Type to search..." />
+
+    <div class="view-toggle">
+      <button id="btn-cluster" class="active" onclick="setView('cluster')">Clusters</button>
+      <button id="btn-heat" onclick="setView('heat')">Heatmap</button>
+      <button id="btn-both" onclick="setView('both')">Both</button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="section">
+    <h3>Statistics</h3>
+    <div class="stat-row"><span class="label">Displayed</span><span class="value" id="stat-total">0</span></div>
+    <div class="stat-row"><span class="label">FDIC Banks</span><span class="value" id="stat-fdic">0</span></div>
+    <div class="stat-row"><span class="label">SEC Companies</span><span class="value" id="stat-sec">0</span></div>
+    <div class="stat-row"><span class="label">EPA Facilities</span><span class="value" id="stat-epa">0</span></div>
+    <div class="stat-row"><span class="label">States</span><span class="value" id="stat-states">0</span></div>
+    <div class="stat-row"><span class="label">Industries</span><span class="value" id="stat-industries">0</span></div>
+  </div>
+
+  <!-- Legend -->
+  <div class="section">
+    <h3>Cluster Density</h3>
+    <div class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span> Low (&lt;100)</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Medium (100-999)</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span> High (1,000+)</div>
+
+    <h3 style="margin-top:12px">Sources</h3>
+    <div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span> FDIC Banks</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#a855f7"></span> SEC Companies</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#f97316"></span> EPA Facilities</div>
+
+    <h3 style="margin-top:12px" id="industry-legend-title">Industries</h3>
+    <div id="industry-legend"></div>
+  </div>
+
+  <!-- Analysis -->
+  <div class="section">
+    <h3>Concentration Analysis</h3>
+    <p style="font-size:11px;color:#94a3b8;margin-bottom:10px">
+      Find clusters of companies in the same industry concentrated in the same area.
+    </p>
+    <div class="analysis-controls">
+      <div class="ctrl-row">
+        <label>Radius</label>
+        <input type="range" id="a-radius" min="0.5" max="50" step="0.5" value="5">
+        <span class="range-val" id="a-radius-val">5 km</span>
+      </div>
+      <div class="ctrl-row">
+        <label>Min. group</label>
+        <input type="range" id="a-min" min="2" max="100" step="1" value="10">
+        <span class="range-val" id="a-min-val">10</span>
+      </div>
+      <div class="ctrl-row">
+        <label>Industry</label>
+        <select id="a-industry"><option value="">All Industries</option></select>
+      </div>
+      <div class="ctrl-row">
+        <label>State</label>
+        <select id="a-state"><option value="">All States</option></select>
+      </div>
+      <div class="ctrl-row">
+        <label>Search</label>
+        <input type="text" id="a-search" placeholder="Company name..." style="flex:1">
+      </div>
+    </div>
+    <button class="analysis-btn" id="btn-analyze" onclick="runAnalysis()" style="margin-top:10px">
+      Analyze Concentrations
+    </button>
+    <div id="analysis-summary" style="display:none;margin-top:8px;font-size:12px;color:#94a3b8"></div>
+    <button id="btn-clear-analysis" style="display:none;margin-top:6px;width:100%;padding:5px;border-radius:5px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#94a3b8;font-size:11px;cursor:pointer" onclick="clearAnalysis()">Clear Analysis</button>
+    <div id="analysis-results"></div>
+  </div>
+</div>
+
+<script>
+// ── Colors ──────────────────────────────────────────────────────────────────
+const SOURCE_COLORS = { fdic: "#22c55e", sec: "#a855f7", epa: "#f97316" };
+
+const INDUSTRY_COLORS = {
+  "Agriculture & Forestry": "#16a34a",
+  "Mining & Extraction": "#a16207",
+  "Utilities": "#06b6d4",
+  "Construction": "#ea580c",
+  "Manufacturing": "#2563eb",
+  "Wholesale Trade": "#7c3aed",
+  "Retail Trade": "#db2777",
+  "Transportation & Warehousing": "#0891b2",
+  "Information & Media": "#8b5cf6",
+  "Finance & Insurance": "#22c55e",
+  "Real Estate": "#15803d",
+  "Professional & Technical Services": "#6366f1",
+  "Management of Companies": "#9333ea",
+  "Administrative & Waste Services": "#78716c",
+  "Educational Services": "#0ea5e9",
+  "Health Care & Social Assistance": "#14b8a6",
+  "Arts & Entertainment": "#ec4899",
+  "Accommodation & Food Services": "#f59e0b",
+  "Other Services": "#94a3b8",
+  "Public Administration": "#64748b",
+  "Other": "#71717a",
+};
+
+function itemColor(item) {
+  return INDUSTRY_COLORS[item.industry] || SOURCE_COLORS[item.source] || "#94a3b8";
+}
+
+// ── Map ─────────────────────────────────────────────────────────────────────
+const map = L.map("map", { zoomControl: false }).setView([39.5, -98.35], 5);
+L.control.zoom({ position: "topright" }).addTo(map);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; CARTO | FDIC | SEC | EPA',
+  maxZoom: 19,
+}).addTo(map);
+
+let clusterLayer = L.markerClusterGroup({
+  chunkedLoading: true, maxClusterRadius: 55,
+  spiderfyOnMaxZoom: true, showCoverageOnHover: false,
+  disableClusteringAtZoom: 14,
+});
+let heatLayer = null;
+let viewMode = "cluster";
+let displayedData = [];
+
+// ── State ───────────────────────────────────────────────────────────────────
+const US_STATES = [
+  {a:"AL",n:"Alabama"},{a:"AK",n:"Alaska"},{a:"AZ",n:"Arizona"},{a:"AR",n:"Arkansas"},
+  {a:"CA",n:"California"},{a:"CO",n:"Colorado"},{a:"CT",n:"Connecticut"},{a:"DE",n:"Delaware"},
+  {a:"DC",n:"District of Columbia"},{a:"FL",n:"Florida"},{a:"GA",n:"Georgia"},{a:"HI",n:"Hawaii"},
+  {a:"ID",n:"Idaho"},{a:"IL",n:"Illinois"},{a:"IN",n:"Indiana"},{a:"IA",n:"Iowa"},
+  {a:"KS",n:"Kansas"},{a:"KY",n:"Kentucky"},{a:"LA",n:"Louisiana"},{a:"ME",n:"Maine"},
+  {a:"MD",n:"Maryland"},{a:"MA",n:"Massachusetts"},{a:"MI",n:"Michigan"},{a:"MN",n:"Minnesota"},
+  {a:"MS",n:"Mississippi"},{a:"MO",n:"Missouri"},{a:"MT",n:"Montana"},{a:"NE",n:"Nebraska"},
+  {a:"NV",n:"Nevada"},{a:"NH",n:"New Hampshire"},{a:"NJ",n:"New Jersey"},{a:"NM",n:"New Mexico"},
+  {a:"NY",n:"New York"},{a:"NC",n:"North Carolina"},{a:"ND",n:"North Dakota"},{a:"OH",n:"Ohio"},
+  {a:"OK",n:"Oklahoma"},{a:"OR",n:"Oregon"},{a:"PA",n:"Pennsylvania"},{a:"RI",n:"Rhode Island"},
+  {a:"SC",n:"South Carolina"},{a:"SD",n:"South Dakota"},{a:"TN",n:"Tennessee"},{a:"TX",n:"Texas"},
+  {a:"UT",n:"Utah"},{a:"VT",n:"Vermont"},{a:"VA",n:"Virginia"},{a:"WA",n:"Washington"},
+  {a:"WV",n:"West Virginia"},{a:"WI",n:"Wisconsin"},{a:"WY",n:"Wyoming"},
+];
+
+// Populate EPA state selector
+const epaSelect = document.getElementById("epa-state-select");
+US_STATES.forEach(s => { const o = document.createElement("option"); o.value = s.a; o.textContent = s.n; epaSelect.appendChild(o); });
+
+// ── Toasts ──────────────────────────────────────────────────────────────────
+function toast(msg, type = "info") {
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById("toast-container").appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+}
+
+// ── Source loading ───────────────────────────────────────────────────────────
+async function loadSource(src) {
+  const btn = document.getElementById(`btn-load-${src}`);
+  btn.disabled = true; btn.textContent = "Loading..."; btn.className = "loading";
+  try {
+    const resp = await fetch(`/api/load/${src}`);
+    const d = await resp.json();
+    if (d.error) { toast(d.error, "error"); return; }
+    toast(d.message, "success");
+    btn.textContent = "Loaded"; btn.className = "";
+    document.getElementById(`card-${src}`).classList.add("loaded");
+    document.getElementById(`count-${src}`).textContent = `${d.count.toLocaleString()} loaded`;
+    await refreshFilters();
+    await refreshMap();
+  } catch (e) { toast(`Error: ${e.message}`, "error"); }
+  finally { btn.disabled = false; }
+}
+
+async function loadEpaState() {
+  const st = document.getElementById("epa-state-select").value;
+  if (!st) return;
+  const btn = document.getElementById("btn-load-epa");
+  btn.disabled = true; btn.textContent = "Loading..."; btn.className = "loading";
+  try {
+    const resp = await fetch(`/api/load/epa?state=${st}`);
+    const d = await resp.json();
+    if (d.error) { toast(d.error, "error"); return; }
+    toast(d.message, "success");
+    document.getElementById("card-epa").classList.add("loaded");
+
+    // Update EPA counts
+    const srcResp = await fetch("/api/sources");
+    const srcData = await srcResp.json();
+    const epaSrc = srcData.sources.find(s => s.id === "epa");
+    document.getElementById("count-epa").textContent = `${epaSrc.count.toLocaleString()} loaded`;
+    document.getElementById("epa-loaded-list").textContent = `States: ${epaSrc.loaded_states.join(", ")}`;
+
+    await refreshFilters();
+    await refreshMap();
+  } catch (e) { toast(`Error: ${e.message}`, "error"); }
+  finally { btn.disabled = false; btn.textContent = "Load State"; btn.className = ""; }
+}
+
+// ── Load All EPA ────────────────────────────────────────────────────────────
+let loadAllInterval = null;
+
+async function loadAllEpa() {
+  const btn = document.getElementById("btn-load-all-epa");
+  btn.disabled = true; btn.textContent = "Starting...";
+  const progEl = document.getElementById("epa-progress");
+  progEl.style.display = "block";
+
+  try {
+    const resp = await fetch("/api/load-all-epa");
+    const d = await resp.json();
+    if (d.status === "complete") {
+      toast(d.message, "success");
+      btn.textContent = "All Loaded"; return;
+    }
+    if (d.status === "already_running") {
+      toast("Already loading in background", "info");
+    } else {
+      toast(d.message, "info");
+    }
+    btn.textContent = "Loading...";
+    // Poll progress
+    if (loadAllInterval) clearInterval(loadAllInterval);
+    loadAllInterval = setInterval(pollProgress, 3000);
+    pollProgress();
+  } catch (e) { toast(`Error: ${e.message}`, "error"); btn.disabled = false; btn.textContent = "Load All 51 States"; }
+}
+
+async function pollProgress() {
+  try {
+    const resp = await fetch("/api/load-all-progress");
+    const p = await resp.json();
+    const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
+    document.getElementById("epa-progress-text").textContent =
+      `${p.done}/${p.total} states (${p.total_facilities.toLocaleString()} facilities)${p.current ? ` — loading ${p.current}...` : ""}`;
+    document.getElementById("epa-progress-bar").style.width = pct + "%";
+    document.getElementById("count-epa").textContent = `${p.total_facilities.toLocaleString()} loaded`;
+    document.getElementById("epa-loaded-list").textContent = `States: ${p.loaded_states.join(", ")}`;
+
+    if (!p.running) {
+      clearInterval(loadAllInterval);
+      loadAllInterval = null;
+      const btn = document.getElementById("btn-load-all-epa");
+      btn.textContent = "All Loaded"; btn.disabled = true;
+      document.getElementById("card-epa").classList.add("loaded");
+      if (p.errors.length) toast(`Completed with ${p.errors.length} errors`, "error");
+      else toast(`All states loaded: ${p.total_facilities.toLocaleString()} facilities`, "success");
+      await refreshFilters();
+      await refreshMap();
+    }
+  } catch (e) { /* ignore polling errors */ }
+}
+
+// ── Filters ─────────────────────────────────────────────────────────────────
+async function refreshFilters() {
+  const resp = await fetch("/api/filters");
+  const d = await resp.json();
+
+  const stateSelect = document.getElementById("filter-state");
+  const current = stateSelect.value;
+  stateSelect.innerHTML = '<option value="">All States</option>';
+  d.states.forEach(s => { const o = document.createElement("option"); o.value = s; o.textContent = s; stateSelect.appendChild(o); });
+  stateSelect.value = current;
+
+  const indSelect = document.getElementById("filter-industry");
+  const currentInd = indSelect.value;
+  indSelect.innerHTML = '<option value="">All Industries</option>';
+  d.industries.forEach(i => { const o = document.createElement("option"); o.value = i; o.textContent = i; indSelect.appendChild(o); });
+  indSelect.value = currentInd;
+
+  // Industry legend
+  const legend = document.getElementById("industry-legend");
+  legend.innerHTML = "";
+  d.industries.forEach(i => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = `<span class="legend-dot" style="background:${INDUSTRY_COLORS[i] || '#94a3b8'}"></span> ${i}`;
+    legend.appendChild(item);
+  });
+}
+
+// ── Map rendering ───────────────────────────────────────────────────────────
+async function refreshMap() {
+  const sources = [];
+  if (document.getElementById("chk-fdic").checked) sources.push("fdic");
+  if (document.getElementById("chk-sec").checked) sources.push("sec");
+  if (document.getElementById("chk-epa").checked) sources.push("epa");
+
+  const params = new URLSearchParams();
+  params.set("sources", sources.join(","));
+  const state = document.getElementById("filter-state").value;
+  const industry = document.getElementById("filter-industry").value;
+  const search = document.getElementById("filter-search").value;
+  if (state) params.set("state", state);
+  if (industry) params.set("industry", industry);
+  if (search) params.set("search", search);
+
+  const resp = await fetch(`/api/data?${params}`);
+  const d = await resp.json();
+  displayedData = d.data;
+  renderMap(displayedData);
+}
+
+function renderMap(data) {
+  clusterLayer.clearLayers();
+  if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+
+  const markers = [];
+  const heatPoints = [];
+  let cFdic = 0, cSec = 0, cEpa = 0;
+  const stateSet = new Set(), indSet = new Set();
+
+  data.forEach(item => {
+    const color = itemColor(item);
+    if (item.source === "fdic") cFdic++;
+    else if (item.source === "sec") cSec++;
+    else if (item.source === "epa") cEpa++;
+    stateSet.add(item.state);
+    indSet.add(item.industry);
+
+    const m = L.circleMarker([item.lat, item.lon], {
+      radius: 4, fillColor: color, color: "#fff", weight: .8, opacity: .7, fillOpacity: .8,
+    });
+
+    // Build popup
+    let extra = "";
+    const ex = item.extra || {};
+    if (ex.ticker) extra += `<b>Ticker:</b> ${ex.ticker} (${ex.exchange})<br>`;
+    if (ex.cik) extra += `<b>CIK:</b> ${ex.cik}<br>`;
+    if (ex.cert) extra += `<b>FDIC Cert:</b> ${ex.cert}<br>`;
+    if (ex.assets) extra += `<b>Assets:</b> $${(ex.assets/1000).toLocaleString(undefined,{maximumFractionDigits:0})}M<br>`;
+    if (ex.established) extra += `<b>Est:</b> ${ex.established}<br>`;
+    if (ex.registry_id) extra += `<b>EPA ID:</b> ${ex.registry_id}<br>`;
+    if (ex.county) extra += `<b>County:</b> ${ex.county}<br>`;
+    if (item.sic) extra += `<b>SIC:</b> ${item.sic}<br>`;
+    if (item.naics) extra += `<b>NAICS:</b> ${item.naics}<br>`;
+
+    const srcLabel = {fdic:"FDIC Bank", sec:"SEC Company", epa:"EPA Facility"}[item.source] || item.source;
+
+    m.bindPopup(`
+      <div style="min-width:240px;max-width:320px">
+        <strong style="font-size:14px">${item.name || "Unnamed"}</strong><br>
+        <span style="color:#888;font-size:12px">${srcLabel} &mdash; ${item.industry}</span>
+        <hr style="margin:6px 0;border:none;border-top:1px solid #eee">
+        <b>Address:</b> ${item.address || "N/A"}<br>
+        <b>Location:</b> ${item.city}, ${item.state} ${item.zip}<br>
+        ${item.detail ? `<b>Detail:</b> ${item.detail}<br>` : ""}
+        ${extra}
+        <b>Coords:</b> ${item.lat.toFixed(4)}, ${item.lon.toFixed(4)}
+      </div>
+    `);
+    markers.push(m);
+    heatPoints.push([item.lat, item.lon, 0.5]);
+  });
+
+  clusterLayer.addLayers(markers);
+  if (viewMode === "cluster" || viewMode === "both") map.addLayer(clusterLayer);
+  if (viewMode === "heat" || viewMode === "both") {
+    heatLayer = L.heatLayer(heatPoints, {
+      radius: 22, blur: 18, maxZoom: 12,
+      gradient: { 0.15:"#3b82f6", 0.35:"#06b6d4", 0.55:"#22c55e", 0.75:"#f59e0b", 1:"#ef4444" },
+    }).addTo(map);
+  }
+
+  // Stats
+  document.getElementById("stat-total").textContent = data.length.toLocaleString();
+  document.getElementById("stat-fdic").textContent = cFdic.toLocaleString();
+  document.getElementById("stat-sec").textContent = cSec.toLocaleString();
+  document.getElementById("stat-epa").textContent = cEpa.toLocaleString();
+  document.getElementById("stat-states").textContent = stateSet.size;
+  document.getElementById("stat-industries").textContent = indSet.size;
+}
+
+function setView(mode) {
+  viewMode = mode;
+  document.querySelectorAll(".view-toggle button").forEach(b => b.classList.remove("active"));
+  document.getElementById(`btn-${mode}`).classList.add("active");
+  renderMap(displayedData);
+}
+
+// ── Event listeners ─────────────────────────────────────────────────────────
+document.getElementById("filter-state").addEventListener("change", refreshMap);
+document.getElementById("filter-industry").addEventListener("change", refreshMap);
+document.getElementById("filter-search").addEventListener("input", debounce(refreshMap, 300));
+document.getElementById("chk-fdic").addEventListener("change", refreshMap);
+document.getElementById("chk-sec").addEventListener("change", refreshMap);
+document.getElementById("chk-epa").addEventListener("change", refreshMap);
+document.getElementById("sidebar-toggle").addEventListener("click", () => {
+  document.getElementById("sidebar").classList.toggle("collapsed");
+});
+
+// Analysis sliders
+document.getElementById("a-radius").addEventListener("input", e => {
+  document.getElementById("a-radius-val").textContent = e.target.value + " km";
+});
+document.getElementById("a-min").addEventListener("input", e => {
+  document.getElementById("a-min-val").textContent = e.target.value;
+});
+
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+// ── Concentration Analysis ──────────────────────────────────────────────────
+let analysisCircles = [];     // L.circle overlays
+let analysisMarkers = [];     // L.marker for cluster centers
+let analysisData = [];        // raw cluster data from API
+let detailLayer = null;       // L.layerGroup for detail view
+
+function clearAnalysis() {
+  analysisCircles.forEach(c => map.removeLayer(c));
+  analysisMarkers.forEach(m => map.removeLayer(m));
+  if (detailLayer) { map.removeLayer(detailLayer); detailLayer = null; }
+  analysisCircles = []; analysisMarkers = []; analysisData = [];
+  document.getElementById("analysis-results").innerHTML = "";
+  document.getElementById("analysis-summary").style.display = "none";
+  document.getElementById("btn-clear-analysis").style.display = "none";
+  document.querySelectorAll(".cluster-card").forEach(c => c.classList.remove("active"));
+}
+
+async function runAnalysis() {
+  clearAnalysis();
+  const btn = document.getElementById("btn-analyze");
+  btn.disabled = true; btn.textContent = "Analyzing...";
+
+  const sources = [];
+  if (document.getElementById("chk-fdic").checked) sources.push("fdic");
+  if (document.getElementById("chk-sec").checked) sources.push("sec");
+  if (document.getElementById("chk-epa").checked) sources.push("epa");
+
+  const params = new URLSearchParams({
+    sources: sources.join(","),
+    radius_km: document.getElementById("a-radius").value,
+    min_companies: document.getElementById("a-min").value,
+    top_n: "200",
+  });
+  const ind = document.getElementById("a-industry").value;
+  const st = document.getElementById("a-state").value;
+  const search = document.getElementById("a-search").value;
+  if (ind) params.set("industry", ind);
+  if (st) params.set("state", st);
+  if (search) params.set("search", search);
+
+  try {
+    const resp = await fetch(`/api/analyze?${params}`);
+    const d = await resp.json();
+    analysisData = d.clusters;
+
+    // Summary
+    const sumEl = document.getElementById("analysis-summary");
+    sumEl.style.display = "block";
+    sumEl.innerHTML = `Found <b style="color:#f59e0b">${d.total_clusters}</b> concentration clusters from <b>${d.total_analyzed.toLocaleString()}</b> entities`;
+    document.getElementById("btn-clear-analysis").style.display = "block";
+
+    if (!d.clusters.length) {
+      document.getElementById("analysis-results").innerHTML =
+        '<div style="text-align:center;color:#64748b;padding:20px;font-size:12px">No clusters found. Try lowering the minimum group size or increasing the radius.</div>';
+      return;
+    }
+
+    // Draw circles + markers on map
+    d.clusters.forEach((cl, i) => {
+      const radiusM = Math.max(cl.radius_km * 1000, 500);
+      const circle = L.circle([cl.lat, cl.lon], {
+        radius: radiusM,
+        color: "#f59e0b",
+        fillColor: "#f59e0b",
+        fillOpacity: 0.08 + Math.min(cl.density_score / 500, 0.15),
+        weight: 1.5,
+        dashArray: "4 4",
+      }).addTo(map);
+
+      // Pulsing center marker
+      const size = Math.min(8 + Math.log2(cl.count) * 4, 30);
+      const marker = L.circleMarker([cl.lat, cl.lon], {
+        radius: size,
+        fillColor: cl.density_score > 100 ? "#ef4444" : cl.density_score > 20 ? "#f59e0b" : "#3b82f6",
+        color: "#fff",
+        weight: 2,
+        fillOpacity: 0.9,
+      }).addTo(map);
+
+      marker.bindPopup(`
+        <div style="min-width:260px">
+          <strong style="font-size:14px;color:#dc2626">#${cl.rank} Concentration Cluster</strong><br>
+          <span style="color:#666">${cl.industry}</span>
+          <hr style="margin:6px 0;border:none;border-top:1px solid #eee">
+          <b>Companies:</b> ${cl.count} (${cl.unique_names} unique names)<br>
+          <b>Location:</b> ${cl.top_cities.map(c => c.city).join(", ")}, ${cl.state}<br>
+          <b>Spread:</b> ${cl.radius_km} km radius<br>
+          <b>Density:</b> ${cl.density_score} companies/km<br>
+          <b>Sources:</b> ${Object.entries(cl.sources).map(([k,v]) => k.toUpperCase()+":"+v).join(", ")}<br>
+          <hr style="margin:6px 0;border:none;border-top:1px solid #eee">
+          <b>Top names:</b><br>
+          ${cl.top_names.slice(0,5).map(n => `&bull; ${n.name} (${n.count}x)`).join("<br>")}
+        </div>
+      `);
+
+      circle._clusterIndex = i;
+      marker._clusterIndex = i;
+      analysisCircles.push(circle);
+      analysisMarkers.push(marker);
+    });
+
+    // Render result cards
+    const container = document.getElementById("analysis-results");
+    container.innerHTML = "";
+    d.clusters.forEach((cl, i) => {
+      const densClass = cl.density_score > 100 ? "high" : cl.density_score > 20 ? "med" : "low";
+      const card = document.createElement("div");
+      card.className = "cluster-card";
+      card.dataset.index = i;
+      card.innerHTML = `
+        <div class="cc-header">
+          <span class="cc-rank">#${cl.rank}</span>
+          <span class="cc-industry">${cl.industry}</span>
+          <span class="cc-count">${cl.count}</span>
+          <span class="cc-density ${densClass}">${cl.density_score}/km</span>
+        </div>
+        <div class="cc-meta">
+          ${cl.top_cities.map(c => c.city).join(", ")}, ${cl.state}
+          &mdash; ${cl.unique_names} unique &mdash; ${cl.radius_km} km spread
+        </div>
+        <div class="cc-names">
+          ${cl.top_names.slice(0,3).map(n => `<span>${n.name}</span> (${n.count}x)`).join(" &bull; ")}
+        </div>
+      `;
+      card.addEventListener("click", () => focusCluster(i));
+      container.appendChild(card);
+    });
+
+    // Zoom to fit all clusters
+    if (d.clusters.length) {
+      const bounds = L.latLngBounds(d.clusters.map(c => [c.lat, c.lon]));
+      map.fitBounds(bounds, { padding: [60, 60] });
+    }
+
+    toast(`Found ${d.total_clusters} concentration clusters`, "success");
+  } catch (e) {
+    toast(`Analysis error: ${e.message}`, "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "Analyze Concentrations";
+  }
+}
+
+async function focusCluster(index) {
+  const cl = analysisData[index];
+  if (!cl) return;
+
+  // Highlight active card
+  document.querySelectorAll(".cluster-card").forEach(c => c.classList.remove("active"));
+  const card = document.querySelector(`.cluster-card[data-index="${index}"]`);
+  if (card) card.classList.add("active");
+
+  // Zoom to cluster
+  const radiusM = Math.max(cl.radius_km * 1000, 500);
+  map.flyTo([cl.lat, cl.lon], Math.min(map.getBoundsZoom(
+    L.latLngBounds(
+      L.latLng(cl.lat - cl.radius_km/111, cl.lon - cl.radius_km/85),
+      L.latLng(cl.lat + cl.radius_km/111, cl.lon + cl.radius_km/85)
+    )
+  ), 16), { duration: 0.8 });
+
+  // Highlight the circle
+  analysisCircles.forEach((c, i) => {
+    c.setStyle({ weight: i === index ? 3 : 1.5, fillOpacity: i === index ? 0.2 : 0.08, dashArray: i === index ? null : "4 4" });
+  });
+
+  // Fetch detail — all companies in this cluster
+  if (detailLayer) { map.removeLayer(detailLayer); detailLayer = null; }
+
+  const sources = [];
+  if (document.getElementById("chk-fdic").checked) sources.push("fdic");
+  if (document.getElementById("chk-sec").checked) sources.push("sec");
+  if (document.getElementById("chk-epa").checked) sources.push("epa");
+
+  try {
+    const params = new URLSearchParams({
+      sources: sources.join(","),
+      lat: cl.lat, lon: cl.lon,
+      radius_km: Math.max(cl.radius_km, parseFloat(document.getElementById("a-radius").value)),
+      industry: cl.industry,
+    });
+    const resp = await fetch(`/api/analyze/detail?${params}`);
+    const d = await resp.json();
+
+    detailLayer = L.layerGroup();
+    d.companies.forEach(comp => {
+      const m = L.circleMarker([comp.lat, comp.lon], {
+        radius: 6, fillColor: "#ef4444", color: "#fff", weight: 1.5, fillOpacity: 0.9,
+      });
+      const srcLabel = {fdic:"FDIC Bank", sec:"SEC Company", epa:"EPA Facility"}[comp.source] || comp.source;
+      m.bindPopup(`
+        <div style="min-width:200px">
+          <strong>${comp.name || "Unnamed"}</strong><br>
+          <span style="color:#888;font-size:12px">${srcLabel} &mdash; ${comp.industry}</span>
+          <hr style="margin:4px 0;border:none;border-top:1px solid #eee">
+          ${comp.address || ""}<br>
+          ${comp.city}, ${comp.state} ${comp.zip}<br>
+          <b>Distance:</b> ${comp._dist_km} km from center<br>
+          ${comp.detail ? `<b>Detail:</b> ${comp.detail}<br>` : ""}
+        </div>
+      `);
+      detailLayer.addLayer(m);
+    });
+    detailLayer.addTo(map);
+  } catch (e) { /* ignore detail fetch errors */ }
+}
+
+// Populate analysis dropdowns when filters update
+const origRefreshFilters = refreshFilters;
+refreshFilters = async function() {
+  await origRefreshFilters();
+  // Sync analysis dropdowns
+  const aInd = document.getElementById("a-industry");
+  const curInd = aInd.value;
+  aInd.innerHTML = '<option value="">All Industries</option>';
+  document.querySelectorAll("#filter-industry option").forEach(o => {
+    if (o.value) { const n = o.cloneNode(true); aInd.appendChild(n); }
+  });
+  aInd.value = curInd;
+
+  const aSt = document.getElementById("a-state");
+  const curSt = aSt.value;
+  aSt.innerHTML = '<option value="">All States</option>';
+  document.querySelectorAll("#filter-state option").forEach(o => {
+    if (o.value) { const n = o.cloneNode(true); aSt.appendChild(n); }
+  });
+  aSt.value = curSt;
+};
+
+// ── Init ────────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    await loadSource("fdic");
+    document.getElementById("loading-overlay").classList.add("hidden");
+  } catch (e) {
+    document.getElementById("loading-text").textContent = "Error: " + e.message;
+  }
+})();
+</script>
+</body>
+</html>
